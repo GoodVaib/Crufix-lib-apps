@@ -1,4 +1,4 @@
-# Crufix-lib-apps
+# Crufix Lib Apps
 Version: **0.1**
 ****
 # Описание
