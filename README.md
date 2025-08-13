@@ -2,7 +2,7 @@
 Version: **0.1**
 ****
 # Описание
-Description_
+Description
 ****
 ![Static Badge](https://img.shields.io/badge/Crufix-Lib_Apps-Oxygen)
 ![GitHub top language](https://img.shields.io/github/languages/top/GoodVaib/Crufix-lib-apps)
