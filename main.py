@@ -1,263 +1,159 @@
 import os
-import requests
 import json
-import tempfile
-import webbrowser
-import customtkinter as ctk
-from PIL import Image, ImageOps
-from io import BytesIO
-
-# Настройки внешнего вида
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+import requests
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.image import AsyncImage
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.core.window import Window
+from kivy.lang import Builder
+from kivymd.uix.list import MDList, OneLineAvatarListItem, ImageLeftWidget
 
 # Конфигурация
-DRIVE_BASE_URL = "https://drive.google.com/uc?export=download&id="
-APPS_CONFIG_URL = "https://drive.google.com/uc?export=download&id=YOUR_CONFIG_FILE_ID"
+REPO_URL = "https://raw.githubusercontent.com/ваш-аккаунт/ваш-репозиторий/ветка"
+INDEX_FILE = f"{REPO_URL}/apps.json"
 
-class AppStore:
-    def __init__(self):
-        self.apps = []
-        self.current_app = None
-        self.image_cache = {}
+class AppListScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.layout = BoxLayout(orientation='vertical')
+        self.scroll = ScrollView()
+        self.list_view = MDList()
         
-        self.root = ctk.CTk()
-        self.root.title("Crufix Library Apps")
-        self.root.geometry("1000x700")
-        self.root.minsize(800, 600)
+        self.load_data()
+        self.scroll.add_widget(self.list_view)
+        self.layout.add_widget(self.scroll)
+        self.add_widget(self.layout)
+
+    def load_data(self):
+        try:
+            response = requests.get(INDEX_FILE)
+            apps = json.loads(response.text)["apps"]
+            
+            for app in apps:
+                item = OneLineAvatarListItem(
+                    text=f"{app['name']} v{app['version']}",
+                    on_release=lambda x, a=app: self.show_app_detail(a)
+                )
+                icon = ImageLeftWidget(
+                    source=f"{REPO_URL}/{app['folder']}/{app['icon']}"
+                )
+                item.add_widget(icon)
+                self.list_view.add_widget(item)
+                
+        except Exception as e:
+            self.layout.add_widget(Label(text=f"Ошибка: {str(e)}"))
+
+    def show_app_detail(self, app):
+        app_manager.current = 'detail'
+        app_manager.current_screen.load_app(app)
+
+class AppDetailScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.layout = BoxLayout(orientation='vertical')
+        self.scroll = ScrollView()
+        self.content = BoxLayout(orientation='vertical', size_hint_y=None)
+        self.content.bind(minimum_height=self.content.setter('height'))
         
-        self.create_widgets()
-        self.load_apps_data()
+        self.back_btn = Button(text="Назад", size_hint_y=None, height=50)
+        self.back_btn.bind(on_release=self.go_back)
         
-    def create_widgets(self):
-        # Основная рамка
-        self.main_frame = ctk.CTkFrame(self.root)
-        self.main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        self.layout.add_widget(self.back_btn)
+        self.scroll.add_widget(self.content)
+        self.layout.add_widget(self.scroll)
+        self.add_widget(self.layout)
+    
+    def load_app(self, app):
+        self.content.clear_widgets()
         
-        # Список приложений слева
-        self.apps_frame = ctk.CTkScrollableFrame(
-            self.main_frame, 
-            width=250,
-            label_text="Доступные приложения"
+        # Иконка
+        self.content.add_widget(
+            AsyncImage(source=f"{REPO_URL}/{app['folder']}/{app['icon']}", size_hint=(1, None), height=100)
         )
-        self.apps_frame.pack(side="left", fill="y", padx=(0, 10), pady=10)
         
-        # Детали приложения справа
-        self.details_frame = ctk.CTkFrame(self.main_frame)
-        self.details_frame.pack(side="right", fill="both", expand=True, pady=10)
+        # Информация
+        info = f"""
+        [b]{app['name']}[/b] v{app['version']}
+        Автор: {app.get('author', 'Неизвестен')}
         
-        # Элементы деталей
-        self.app_icon = ctk.CTkLabel(self.details_frame, text="", width=200, height=200)
-        self.app_icon.pack(pady=20)
-        
-        self.app_name = ctk.CTkLabel(
-            self.details_frame, 
-            text="Выберите приложение",
-            font=ctk.CTkFont(size=20, weight="bold")
-        )
-        self.app_name.pack(pady=5)
-        
-        self.app_version = ctk.CTkLabel(
-            self.details_frame, 
-            text="",
-            text_color="gray70"
-        )
-        self.app_version.pack(pady=2)
-        
-        self.app_description = ctk.CTkTextbox(
-            self.details_frame,
-            height=150,
-            wrap="word",
-            font=ctk.CTkFont(size=14)
-        )
-        self.app_description.pack(fill="x", padx=20, pady=10)
-        self.app_description.configure(state="disabled")
+        {app['description']}
+        """
+        self.content.add_widget(Label(text=info, markup=True))
         
         # Скриншоты
-        self.screenshots_label = ctk.CTkLabel(
-            self.details_frame, 
-            text="Скриншоты:",
-            anchor="w",
-            font=ctk.CTkFont(weight="bold")
-        )
-        self.screenshots_label.pack(fill="x", padx=20, pady=(10, 5))
+        self.content.add_widget(Label(text="Скриншоты:"))
+        screenshot_grid = GridLayout(cols=2, size_hint_y=None)
+        screenshot_grid.bind(minimum_height=screenshot_grid.setter('height'))
         
-        self.screenshots_frame = ctk.CTkScrollableFrame(
-            self.details_frame,
-            orientation="horizontal",
-            height=150
-        )
-        self.screenshots_frame.pack(fill="x", padx=10, pady=(0, 20))
-        
-        # Кнопка скачивания
-        self.download_btn = ctk.CTkButton(
-            self.details_frame,
-            text="Скачать APK",
-            command=self.download_app,
-            height=40,
-            font=ctk.CTkFont(size=15, weight="bold"),
-            fg_color="#2aa244",
-            hover_color="#1f8134"
-        )
-        self.download_btn.pack(fill="x", padx=50, pady=10)
-        self.download_btn.configure(state="disabled")
-
-    def load_apps_data(self):
-        """Загрузка данных о приложениях"""
-        try:
-            response = requests.get(APPS_CONFIG_URL)
-            response.raise_for_status()
-            self.apps = json.loads(response.text)["apps"]
-            self.display_apps_list()
-        except Exception as e:
-            error_label = ctk.CTkLabel(
-                self.apps_frame,
-                text=f"Ошибка загрузки данных: {str(e)}",
-                text_color="red"
+        for shot in app['screenshots']:
+            screenshot_grid.add_widget(
+                AsyncImage(
+                    source=f"{REPO_URL}/{app['folder']}/screenshots/{shot}",
+                    size_hint=(None, None),
+                    width=Window.width/2.2,
+                    height=200
+                )
             )
-            error_label.pack(pady=20)
-
-    def display_apps_list(self):
-        """Отображение списка приложений"""
-        for app in self.apps:
-            # Создание рамки для приложения
-            app_frame = ctk.CTkFrame(self.apps_frame, height=70)
-            app_frame.pack(fill="x", pady=5, padx=5)
-            app_frame.bind("<Button-1>", lambda e, a=app: self.show_app_details(a))
-            
-            # Загрузка иконки
-            icon_url = f"{DRIVE_BASE_URL}{app['icon_id']}"
-            try:
-                if icon_url not in self.image_cache:
-                    response = requests.get(icon_url)
-                    img = Image.open(BytesIO(response.content))
-                    img = ImageOps.fit(img, (50, 50), Image.LANCZOS)
-                    self.image_cache[icon_url] = ctk.CTkImage(light_image=img, size=(50, 50))
-                
-                icon_label = ctk.CTkLabel(app_frame, image=self.image_cache[icon_url], text="")
-                icon_label.pack(side="left", padx=10)
-                icon_label.bind("<Button-1>", lambda e, a=app: self.show_app_details(a))
-            except:
-                icon_label = ctk.CTkLabel(app_frame, text="❌", width=50)
-                icon_label.pack(side="left", padx=10)
-            
-            # Информация о приложении
-            text_frame = ctk.CTkFrame(app_frame, fg_color="transparent")
-            text_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
-            text_frame.bind("<Button-1>", lambda e, a=app: self.show_app_details(a))
-            
-            name_label = ctk.CTkLabel(
-                text_frame, 
-                text=app["name"],
-                anchor="w",
-                font=ctk.CTkFont(weight="bold")
+        self.content.add_widget(screenshot_grid)
+        
+        # Кнопка установки
+        install_btn = Button(text="Установить", size_hint_y=None, height=60)
+        install_btn.bind(
+            on_release=lambda x: self.install_app(
+                f"{REPO_URL}/{app['folder']}/{app['apk_file']}",
+                app['name']
             )
-            name_label.pack(fill="x", pady=(5, 0))
-            
-            version_label = ctk.CTkLabel(
-                text_frame, 
-                text=f"Версия: {app['version']}",
-                anchor="w",
-                text_color="gray70"
-            )
-            version_label.pack(fill="x")
+        )
+        self.content.add_widget(install_btn)
 
-    def show_app_details(self, app):
-        """Отображение деталей приложения"""
-        self.current_app = app
+    def install_app(self, url, name):
+        from android.permissions import request_permissions, Permission
+        from android.storage import app_storage_path
         
-        # Обновление основной информации
-        self.app_name.configure(text=app["name"])
-        self.app_version.configure(text=f"Версия: {app['version']}")
+        request_permissions([Permission.WRITE_EXTERNAL_STORAGE])
         
-        # Описание
-        self.app_description.configure(state="normal")
-        self.app_description.delete("1.0", "end")
-        self.app_description.insert("1.0", app["description"])
-        self.app_description.configure(state="disabled")
-        
-        # Загрузка иконки
-        icon_url = f"{DRIVE_BASE_URL}{app['icon_id']}"
         try:
-            if icon_url not in self.image_cache:
-                response = requests.get(icon_url)
-                img = Image.open(BytesIO(response.content))
-                img = ImageOps.fit(img, (200, 200), Image.LANCZOS)
-                self.image_cache[icon_url] = ctk.CTkImage(light_image=img, size=(200, 200))
+            apk_path = os.path.join(app_storage_path(), f"{name.replace(' ', '_')}.apk")
             
-            self.app_icon.configure(image=self.image_cache[icon_url])
-        except:
-            self.app_icon.configure(image=None, text="❌ Иконка недоступна")
-        
-        # Очистка скриншотов
-        for widget in self.screenshots_frame.winfo_children():
-            widget.destroy()
-        
-        # Загрузка скриншотов
-        for screenshot_id in app["screenshot_ids"]:
-            screenshot_url = f"{DRIVE_BASE_URL}{screenshot_id}"
-            try:
-                # Асинхронная загрузка для производительности
-                self.root.after(0, lambda url=screenshot_url: self.load_screenshot(url))
-            except Exception as e:
-                print(f"Ошибка загрузки скриншота: {e}")
-        
-        # Активация кнопки скачивания
-        self.download_btn.configure(state="normal")
-
-    def load_screenshot(self, url):
-        """Загрузка и отображение скриншота"""
-        try:
+            # Скачивание APK
             response = requests.get(url)
-            img = Image.open(BytesIO(response.content))
-            img = ImageOps.fit(img, (200, 350), Image.LANCZOS)
-            ctk_img = ctk.CTkImage(light_image=img, size=(200, 350))
+            with open(apk_path, 'wb') as f:
+                f.write(response.content)
             
-            screenshot_label = ctk.CTkLabel(
-                self.screenshots_frame, 
-                image=ctk_img, 
-                text=""
+            # Установка
+            from jnius import autoclass
+            Intent = autoclass('android.content.Intent')
+            Uri = autoclass('android.net.Uri')
+            File = autoclass('java.io.File')
+            
+            intent = Intent(Intent.ACTION_VIEW)
+            intent.setDataAndType(
+                Uri.fromFile(File(apk_path)),
+                "application/vnd.android.package-archive"
             )
-            screenshot_label.pack(side="left", padx=5)
-        except:
-            screenshot_label = ctk.CTkLabel(
-                self.screenshots_frame, 
-                text="❌\nСкриншот\nне загружен",
-                width=100,
-                height=150,
-                justify="center"
-            )
-            screenshot_label.pack(side="left", padx=5)
-
-    def download_app(self):
-        """Скачивание приложения"""
-        if not self.current_app:
-            return
-        
-        apk_url = f"{DRIVE_BASE_URL}{self.current_app['apk_id']}"
-        try:
-            webbrowser.open(apk_url)
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            PythonActivity.mActivity.startActivity(intent)
+            
         except Exception as e:
-            error_dialog = ctk.CTkToplevel(self.root)
-            error_dialog.title("Ошибка")
-            error_dialog.geometry("300x150")
-            
-            ctk.CTkLabel(
-                error_dialog, 
-                text=f"Не удалось открыть ссылку для скачивания:\n{str(e)}",
-                justify="center",
-                wraplength=280
-            ).pack(pady=20, padx=10)
-            
-            ctk.CTkButton(
-                error_dialog, 
-                text="OK", 
-                command=error_dialog.destroy
-            ).pack(pady=10)
+            print(f"Ошибка установки: {str(e)}")
 
-    def run(self):
-        self.root.mainloop()
+    def go_back(self, instance):
+        app_manager.current = 'list'
 
-if __name__ == "__main__":
-    app_store = AppStore()
-    app_store.run()
+class AppStoreApp(App):
+    def build(self):
+        global app_manager
+        app_manager = ScreenManager()
+        app_manager.add_widget(AppListScreen(name='list'))
+        app_manager.add_widget(AppDetailScreen(name='detail'))
+        return app_manager
+
+if __name__ == '__main__':
+    AppStoreApp().run()
